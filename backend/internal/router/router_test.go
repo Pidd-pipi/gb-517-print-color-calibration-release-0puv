@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,6 +111,175 @@ func TestRBACAndImmutableRevisionFlows(t *testing.T) {
 	if status, _ := perform(t, engine, http.MethodGet, "/api/audits", tokens["reviewer"], "reviewer-audit", nil); status != http.StatusOK {
 		t.Fatalf("reviewer audit status = %d, want 200", status)
 	}
+}
+
+func TestProofGateAndJudgmentVersions(t *testing.T) {
+	cfg := testConfig(filepath.Join(t.TempDir(), "gb517-gate.db"))
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	db, redisClient, err := database.Open(context.Background(), cfg, logger)
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	engine := router.New(cfg, db, redisClient, logger)
+	operator := loginToken(t, engine, "operator")
+	reviewer := loginToken(t, engine, "reviewer")
+
+	runPayload := recordPayload("PR-GATE-001", "三点校样门限批次")
+	runPayload["deltaELimit"] = 3.0
+	status, body := perform(t, engine, http.MethodPost, "/api/runs", operator, "gate-run-create", runPayload)
+	if status != http.StatusCreated {
+		t.Fatalf("create run status = %d body=%s", status, body)
+	}
+	run := decodeData[struct {
+		ID      uint `json:"id"`
+		Version uint `json:"version"`
+	}](t, body)
+	runPath := "/api/runs/" + uintString(run.ID)
+	for _, target := range []string{"printing", "proofing"} {
+		status, body = perform(t, engine, http.MethodPost, runPath+"/transition", operator, "gate-run-"+target,
+			map[string]any{"status": target, "expectedVersion": run.Version, "reason": "推进批次"})
+		if status != http.StatusOK {
+			t.Fatalf("run -> %s status = %d body=%s", target, status, body)
+		}
+		run.Version++
+	}
+
+	proofPayload := recordPayload("CP-GATE-001", "三位置校样")
+	proofPayload["relatedCode"] = "PR-GATE-001"
+	proofPayload["readingOperator"] = 1.5
+	proofPayload["readingMiddle"] = 2.0
+	status, body = perform(t, engine, http.MethodPost, "/api/proofs", operator, "gate-proof-create", proofPayload)
+	if status != http.StatusCreated {
+		t.Fatalf("create proof status = %d body=%s", status, body)
+	}
+	proof := decodeData[struct {
+		ID              uint   `json:"id"`
+		Version         uint   `json:"version"`
+		JudgmentVersion uint   `json:"judgmentVersion"`
+		JudgmentResult  string `json:"judgmentResult"`
+	}](t, body)
+	if proof.JudgmentVersion != 1 || proof.JudgmentResult != "incomplete" {
+		t.Fatalf("missing 传动侧 must judge incomplete, got %+v", proof)
+	}
+	proofPath := "/api/proofs/" + uintString(proof.ID)
+
+	holdReason := func() string {
+		_, detailBody := perform(t, engine, http.MethodGet, runPath, operator, "gate-run-read", nil)
+		return decodeData[struct {
+			HoldReason string `json:"holdReason"`
+		}](t, detailBody).HoldReason
+	}
+	if reason := holdReason(); !strings.Contains(reason, "缺少传动侧读数") {
+		t.Fatalf("run should hold for the missing position, got %q", reason)
+	}
+	release := map[string]any{"status": "released", "expectedVersion": run.Version, "reason": "尝试放行"}
+	if status, _ = perform(t, engine, http.MethodPost, runPath+"/transition", reviewer, "gate-release-incomplete", release); status != http.StatusUnprocessableEntity {
+		t.Fatalf("release with missing position status = %d, want 422", status)
+	}
+
+	if status, body = perform(t, engine, http.MethodPut, proofPath, operator, "gate-proof-fail", proofUpdate("PR-GATE-001", proof.Version, 2.2, 3.4, 2.6)); status != http.StatusOK {
+		t.Fatalf("remeasure status = %d body=%s", status, body)
+	}
+	proof.Version++
+	proof.JudgmentVersion++
+	if reason := holdReason(); !strings.Contains(reason, "最差位置（中间）ΔE 3.40 超过批次允许 3.00") {
+		t.Fatalf("run should hold for the over-limit worst position, got %q", reason)
+	}
+	if status, _ = perform(t, engine, http.MethodPost, runPath+"/transition", reviewer, "gate-release-fail", release); status != http.StatusUnprocessableEntity {
+		t.Fatalf("release with over-limit worst status = %d, want 422", status)
+	}
+
+	if status, body = perform(t, engine, http.MethodPut, proofPath, operator, "gate-proof-pass", proofUpdate("PR-GATE-001", proof.Version, 1.5, 2.0, 2.5)); status != http.StatusOK {
+		t.Fatalf("remeasure pass status = %d body=%s", status, body)
+	}
+	proof.Version++
+	proof.JudgmentVersion++
+	status, body = perform(t, engine, http.MethodPost, proofPath+"/transition", operator, "gate-proof-review",
+		map[string]any{"status": "review", "expectedVersion": proof.Version, "reason": "提交复核"})
+	if status != http.StatusOK {
+		t.Fatalf("proof -> review status = %d body=%s", status, body)
+	}
+	proof.Version++
+	status, body = perform(t, engine, http.MethodPost, proofPath+"/transition", reviewer, "gate-proof-accept",
+		map[string]any{"status": "accepted", "expectedVersion": proof.Version, "reason": "复核接收"})
+	if status != http.StatusOK {
+		t.Fatalf("proof -> accepted status = %d body=%s", status, body)
+	}
+	proof.Version++
+	proof.JudgmentVersion++
+
+	// 复核后改动读数：批次必须停在校样阶段并说明原因。
+	if status, body = perform(t, engine, http.MethodPut, proofPath, operator, "gate-proof-tamper", proofUpdate("PR-GATE-001", proof.Version, 1.5, 2.0, 2.6)); status != http.StatusOK {
+		t.Fatalf("tamper update status = %d body=%s", status, body)
+	}
+	proof.Version++
+	proof.JudgmentVersion++
+	tampered := decodeData[struct {
+		JudgmentResult string `json:"judgmentResult"`
+	}](t, body)
+	if tampered.JudgmentResult != "tampered" {
+		t.Fatalf("post-review edit must be judged tampered, got %+v", tampered)
+	}
+	if reason := holdReason(); !strings.Contains(reason, "复核后读数被改动") {
+		t.Fatalf("run should hold for the tampered readings, got %q", reason)
+	}
+	if status, _ = perform(t, engine, http.MethodPost, runPath+"/transition", reviewer, "gate-release-tampered", release); status != http.StatusUnprocessableEntity {
+		t.Fatalf("release with tampered readings status = %d, want 422", status)
+	}
+
+	// 复核员重新接收当前读数，生成新的判定版本后放行。
+	for _, step := range []struct {
+		token, target, requestID string
+	}{
+		{reviewer, "review", "gate-proof-reopen"},
+		{reviewer, "accepted", "gate-proof-reaccept"},
+	} {
+		status, body = perform(t, engine, http.MethodPost, proofPath+"/transition", step.token, step.requestID,
+			map[string]any{"status": step.target, "expectedVersion": proof.Version, "reason": "重新复核当前读数"})
+		if status != http.StatusOK {
+			t.Fatalf("proof -> %s status = %d body=%s", step.target, status, body)
+		}
+		proof.Version++
+	}
+	proof.JudgmentVersion++
+	status, body = perform(t, engine, http.MethodPost, runPath+"/transition", reviewer, "gate-release-ok", release)
+	if status != http.StatusOK {
+		t.Fatalf("release after re-review status = %d body=%s", status, body)
+	}
+	if reason := holdReason(); reason != "" {
+		t.Fatalf("released run must not carry a hold reason, got %q", reason)
+	}
+
+	// 旧结论留在判定历史里，现场能看到本批使用的是哪次结果。
+	_, body = perform(t, engine, http.MethodGet, proofPath, reviewer, "gate-proof-read", nil)
+	detail := decodeData[struct {
+		Judgments []struct {
+			Version uint   `json:"version"`
+			Result  string `json:"result"`
+		} `json:"judgments"`
+	}](t, body)
+	if len(detail.Judgments) != int(proof.JudgmentVersion) || detail.Judgments[0].Version != proof.JudgmentVersion {
+		t.Fatalf("judgment chain should keep every version, got %+v", detail.Judgments)
+	}
+	_, body = perform(t, engine, http.MethodGet, runPath+"/proofs", operator, "gate-run-proofs", nil)
+	linked := decodeData[[]struct {
+		Code            string `json:"code"`
+		JudgmentVersion uint   `json:"judgmentVersion"`
+		JudgmentResult  string `json:"judgmentResult"`
+	}](t, body)
+	if len(linked) != 1 || linked[0].Code != "CP-GATE-001" || linked[0].JudgmentVersion != proof.JudgmentVersion || linked[0].JudgmentResult != "pass" {
+		t.Fatalf("batch must expose the judgment version in force, got %+v", linked)
+	}
+}
+
+func proofUpdate(runCode string, version uint, operator, middle, drive float64) map[string]any {
+	payload := recordPayload("ignored", "三位置校样")
+	payload["relatedCode"] = runCode
+	payload["expectedVersion"] = version
+	payload["readingOperator"] = operator
+	payload["readingMiddle"] = middle
+	payload["readingDrive"] = drive
+	return payload
 }
 
 func testConfig(dsn string) config.Config {

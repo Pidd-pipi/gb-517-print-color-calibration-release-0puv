@@ -20,6 +20,7 @@ func (h *PrintRunHandler) Register(group *gin.RouterGroup) {
 	resource := group.Group("/runs")
 	resource.GET("", h.list)
 	resource.GET("/:id", h.get)
+	resource.GET("/:id/proofs", h.proofs)
 	resource.POST("", middleware.RequireMinimumRole("operator"), h.create)
 	resource.PUT("/:id", middleware.RequireMinimumRole("operator"), h.update)
 	resource.POST("/:id/transition", middleware.RequireMinimumRole("operator"), h.transition)
@@ -47,6 +48,19 @@ func (h *PrintRunHandler) get(c *gin.Context) {
 		return
 	}
 	util.OK(c, item)
+}
+
+func (h *PrintRunHandler) proofs(c *gin.Context) {
+	id, ok := parseID(c)
+	if !ok {
+		return
+	}
+	items, err := h.service.Proofs(c.Request.Context(), id)
+	if err != nil {
+		handleError(c, err)
+		return
+	}
+	util.OK(c, items)
 }
 
 func (h *PrintRunHandler) create(c *gin.Context) {

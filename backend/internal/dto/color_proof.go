@@ -17,6 +17,11 @@ type CreateColorProof struct {
 	EffectiveAt time.Time `json:"effectiveAt" binding:"required"`
 	Evidence    string    `json:"evidence" binding:"max=2000"`
 	RelatedCode string    `json:"relatedCode" binding:"max=64"`
+	// Three 幅面 positions; a missing pointer means the position 未录 and the
+	// judgment will keep the linked batch in proofing.
+	ReadingOperator *float64 `json:"readingOperator"`
+	ReadingMiddle   *float64 `json:"readingMiddle"`
+	ReadingDrive    *float64 `json:"readingDrive"`
 }
 
 type UpdateColorProof struct {
@@ -32,4 +37,7 @@ type UpdateColorProof struct {
 	EffectiveAt     time.Time `json:"effectiveAt" binding:"required"`
 	Evidence        string    `json:"evidence" binding:"max=2000"`
 	RelatedCode     string    `json:"relatedCode" binding:"max=64"`
+	ReadingOperator *float64  `json:"readingOperator"`
+	ReadingMiddle   *float64  `json:"readingMiddle"`
+	ReadingDrive    *float64  `json:"readingDrive"`
 }

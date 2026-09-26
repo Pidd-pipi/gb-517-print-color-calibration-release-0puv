@@ -25,6 +25,24 @@ const (
 
 var AllDecisionType = []string{"release", "rework", "quarantine"}
 
+// JudgmentResult values describe the conclusion of one 校样判定版本. The
+// active judgment of every proof linked to a run gates the proofing ->
+// released transition, so the values are shared exactly like RunState.
+type JudgmentResult string
+
+const (
+	JudgmentPass       JudgmentResult = "pass"
+	JudgmentFail       JudgmentResult = "fail"
+	JudgmentIncomplete JudgmentResult = "incomplete"
+	JudgmentTampered   JudgmentResult = "tampered"
+)
+
+var AllJudgmentResult = []string{"pass", "fail", "incomplete", "tampered"}
+
+// ProofPositions are the three fixed 幅面 measurement positions recorded on
+// every colour proof: 操作侧 / 中间 / 传动侧.
+var ProofPositions = []string{"operator", "middle", "drive"}
+
 var PressUnitTransitions = map[string]map[string]bool{
 	"ready":       {"setup": true, "printing": true},
 	"setup":       {"printing": true, "maintenance": true, "ready": true},

@@ -9,4 +9,5 @@ var (
 	ErrInactiveUser      = errors.New("user account is inactive")
 	ErrForbidden         = errors.New("role is not permitted for this operation")
 	ErrLocked            = errors.New("resolved record is immutable")
+	ErrProofGate         = errors.New("proof gate keeps the run in proofing")
 )

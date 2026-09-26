@@ -17,6 +17,8 @@ type CreatePrintRun struct {
 	EffectiveAt time.Time `json:"effectiveAt" binding:"required"`
 	Evidence    string    `json:"evidence" binding:"max=2000"`
 	RelatedCode string    `json:"relatedCode" binding:"max=64"`
+	// DeltaELimit is the 批次允许色差上限 used by the proof gate.
+	DeltaELimit float64 `json:"deltaELimit" binding:"gte=0"`
 }
 
 type UpdatePrintRun struct {
@@ -32,4 +34,5 @@ type UpdatePrintRun struct {
 	EffectiveAt     time.Time `json:"effectiveAt" binding:"required"`
 	Evidence        string    `json:"evidence" binding:"max=2000"`
 	RelatedCode     string    `json:"relatedCode" binding:"max=64"`
+	DeltaELimit     float64   `json:"deltaELimit" binding:"gte=0"`
 }

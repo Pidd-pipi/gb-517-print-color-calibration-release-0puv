@@ -37,11 +37,16 @@ docker compose down -v --remove-orphans
 |---|---|---|---|
 | 印刷设备 | `PressUnit` | `/api/presses` | ready, setup, printing, maintenance |
 | 印刷批次 | `PrintRun` | `/api/runs` | setup, printing, proofing, hold, released |
-| 色彩校样 | `ColorProof` | `/api/proofs` | captured, review, accepted, rejected |
+| 色彩校样 | `ColorProof` + `ProofJudgment` | `/api/proofs` | captured, review, accepted, rejected |
 | 放行决定 | `ReleaseDecision` | `/api/release` | draft, release, rework, quarantine |
+
+校样判定结果（`JudgmentResult`）取值 `pass, fail, incomplete, tampered`；批次详情通过 `GET /api/runs/:id/proofs` 返回关联校样及其判定版本链。
 
 - JWT 登录和 viewer/operator/reviewer/admin 四级 RBAC。
 - 所有状态变化使用乐观锁并写入不可覆盖的审计日志。
+- 每份校样记录操作侧、中间、传动侧三个 ΔE 读数，复核按最差位置判定，不再用平均值抹平幅面两端偏色。
+- 批次设定允许色差上限；少录位置、最差值超限或复核后改动读数时，批次停在校样阶段并展示具体原因。
+- 重新测量或复核会追加不可变判定版本，旧结论全部留痕；批次详情标明当前采用哪次判定结果。
 - 色彩配置和放行决定在同一数据库事务内追加不可变修订；每个版本保留业务证据、操作者、请求 ID 和原因。
 - 已放行或隔离的决定禁止覆盖式编辑；校样接收/拒绝和批次放行只能由 `reviewer/admin` 完成。
 - 请求 ID、结构化日志、全局错误映射和 Redis 分布式限流。
@@ -123,6 +128,7 @@ cd .. && docker compose config --quiet
 |---|---|---|
 | `RunState` | `setup, printing, proofing, hold, released` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 | `DecisionType` | `release, rework, quarantine` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
+| `JudgmentResult` | `pass, fail, incomplete, tampered` | `backend/internal/constants/status.go`、`frontend/src/utils/format.ts`（中文标签） |
 
 每个实体自己的完整迁移图同样位于 `backend/internal/constants/status.go`；页面使用的状态列表位于 `frontend/src/types/status.ts`。修改状态时必须同步两处并更新对应服务测试。
 

@@ -7,15 +7,19 @@ import "time"
 // changes naturally span persistence, service and UI layers.
 type PrintRun struct {
 	BaseModel
-	Facility    string             `json:"facility" gorm:"size:120;index"`
-	Owner       string             `json:"owner" gorm:"size:120;index"`
-	Category    string             `json:"category" gorm:"size:80;index"`
-	RiskLevel   string             `json:"riskLevel" gorm:"size:32;index"`
-	MetricValue float64            `json:"metricValue"`
-	MetricUnit  string             `json:"metricUnit" gorm:"size:24"`
-	EffectiveAt time.Time          `json:"effectiveAt"`
-	Evidence    string             `json:"evidence" gorm:"size:2000"`
-	RelatedCode string             `json:"relatedCode" gorm:"size:64;index"`
+	Facility    string    `json:"facility" gorm:"size:120;index"`
+	Owner       string    `json:"owner" gorm:"size:120;index"`
+	Category    string    `json:"category" gorm:"size:80;index"`
+	RiskLevel   string    `json:"riskLevel" gorm:"size:32;index"`
+	MetricValue float64   `json:"metricValue"`
+	MetricUnit  string    `json:"metricUnit" gorm:"size:24"`
+	EffectiveAt time.Time `json:"effectiveAt"`
+	Evidence    string    `json:"evidence" gorm:"size:2000"`
+	RelatedCode string    `json:"relatedCode" gorm:"size:64;index"`
+	// DeltaELimit is the 批次允许色差上限 applied to the worst of the three
+	// 幅面 positions; HoldReason explains why the run is held in proofing.
+	DeltaELimit float64            `json:"deltaELimit"`
+	HoldReason  string             `json:"holdReason" gorm:"size:500"`
 	Revisions   []PrintRunRevision `json:"revisions,omitempty" gorm:"foreignKey:PrintRunID"`
 }
 
@@ -42,6 +46,8 @@ type PrintRunRevision struct {
 	MetricUnit  string    `json:"metricUnit" gorm:"size:24"`
 	Evidence    string    `json:"evidence" gorm:"size:2000"`
 	RelatedCode string    `json:"relatedCode" gorm:"size:64"`
+	DeltaELimit float64   `json:"deltaELimit"`
+	HoldReason  string    `json:"holdReason" gorm:"size:500"`
 	Actor       string    `json:"actor" gorm:"size:80;not null"`
 	RequestID   string    `json:"requestId" gorm:"size:80;not null"`
 	Reason      string    `json:"reason" gorm:"size:500;not null"`

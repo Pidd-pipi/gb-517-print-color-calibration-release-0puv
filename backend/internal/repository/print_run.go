@@ -12,8 +12,10 @@ import (
 type PrintRunRepository interface {
 	List(context.Context, dto.PageQuery) (Page[model.PrintRun], error)
 	Get(context.Context, uint) (model.PrintRun, error)
+	GetByCode(context.Context, string) (model.PrintRun, error)
 	CreateVersioned(context.Context, *model.PrintRun, string, string, string) error
 	UpdateVersioned(context.Context, uint, uint, *model.PrintRun, string, string, string) error
+	UpdateHoldReason(context.Context, uint, string) error
 	Delete(context.Context, uint) error
 	CountByStatus(context.Context) (map[string]int64, error)
 }
@@ -34,6 +36,11 @@ func (r *printRunRepository) Get(ctx context.Context, id uint) (model.PrintRun, 
 	err := r.store.db.WithContext(ctx).
 		Preload("Revisions", func(db *gorm.DB) *gorm.DB { return db.Order("version DESC") }).
 		First(&item, id).Error
+	return item, err
+}
+func (r *printRunRepository) GetByCode(ctx context.Context, code string) (model.PrintRun, error) {
+	var item model.PrintRun
+	err := r.store.db.WithContext(ctx).Where("code = ?", code).First(&item).Error
 	return item, err
 }
 func (r *printRunRepository) CreateVersioned(ctx context.Context, item *model.PrintRun, actor, requestID, reason string) error {
@@ -64,8 +71,17 @@ func printRunRevision(item *model.PrintRun, actor, requestID, reason string) *mo
 		Facility: item.Facility, Owner: item.Owner, Category: item.Category,
 		RiskLevel: item.RiskLevel, MetricValue: item.MetricValue, MetricUnit: item.MetricUnit,
 		Evidence: item.Evidence, RelatedCode: item.RelatedCode,
+		DeltaELimit: item.DeltaELimit, HoldReason: item.HoldReason,
 		Actor: actor, RequestID: requestID, Reason: reason,
 	}
+}
+
+// UpdateHoldReason refreshes the derived 校样滞留原因 without touching the
+// optimistic-lock version or updated_at ordering; it is a system-maintained
+// column, not a business edit.
+func (r *printRunRepository) UpdateHoldReason(ctx context.Context, id uint, reason string) error {
+	return r.store.db.WithContext(ctx).Model(&model.PrintRun{}).
+		Where("id = ?", id).UpdateColumn("hold_reason", reason).Error
 }
 func (r *printRunRepository) Delete(ctx context.Context, id uint) error {
 	return r.store.Delete(ctx, id)

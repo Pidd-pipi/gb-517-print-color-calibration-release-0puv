@@ -18,6 +18,37 @@ export interface DomainRecord {
   createdAt: string;
   updatedAt: string;
   revisions?: RevisionRecord[];
+  // 三位置校样读数（操作侧/中间/传动侧）；null 表示该位置未录。
+  readingOperator?: number | null;
+  readingMiddle?: number | null;
+  readingDrive?: number | null;
+  // 当前生效的判定结论（来自最新判定版本的冗余字段）。
+  judgmentVersion?: number;
+  judgmentResult?: string;
+  judgmentReason?: string;
+  worstPosition?: string;
+  overLimit?: string;
+  judgments?: JudgmentRecord[];
+  // 批次字段：允许色差上限与校样滞留原因。
+  deltaELimit?: number;
+  holdReason?: string;
+}
+
+export interface JudgmentRecord {
+  id: number;
+  version: number;
+  result: string;
+  reason: string;
+  readingOperator?: number | null;
+  readingMiddle?: number | null;
+  readingDrive?: number | null;
+  worstValue: number;
+  worstPosition: string;
+  tolerance: number;
+  overLimit?: string;
+  actor: string;
+  requestId: string;
+  createdAt: string;
 }
 
 export interface RevisionRecord {
