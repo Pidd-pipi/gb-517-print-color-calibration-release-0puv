@@ -20,7 +20,10 @@ type PrintRunService interface {
 	Transition(context.Context, uint, dto.TransitionRequest, string, string, string) (model.PrintRun, error)
 	Delete(context.Context, uint, string, string) error
 	StatusCounts(context.Context) (map[string]int64, error)
+	RunProofGate
 }
+
+var _ RunProofGate = (*printRunService)(nil)
 
 type printRunService struct {
 	repository repository.PrintRunRepository
@@ -52,7 +55,8 @@ func (s *printRunService) Create(ctx context.Context, input dto.CreatePrintRun, 
 		Category: strings.TrimSpace(input.Category), RiskLevel: input.RiskLevel,
 		MetricValue: input.MetricValue, MetricUnit: strings.TrimSpace(input.MetricUnit),
 		EffectiveAt: input.EffectiveAt.UTC(), Evidence: strings.TrimSpace(input.Evidence),
-		RelatedCode: strings.ToUpper(strings.TrimSpace(input.RelatedCode)),
+		RelatedCode:    strings.ToUpper(strings.TrimSpace(input.RelatedCode)),
+		ColorTolerance: normalizeTolerance(input.ColorTolerance),
 	}
 	if err := s.repository.CreateVersioned(ctx, &item, actor, requestID, "created colour configuration"); err != nil {
 		return model.PrintRun{}, fmt.Errorf("create 印刷批次: %w", err)
@@ -80,6 +84,7 @@ func (s *printRunService) Update(ctx context.Context, id uint, input dto.UpdateP
 	current.EffectiveAt = input.EffectiveAt.UTC()
 	current.Evidence = strings.TrimSpace(input.Evidence)
 	current.RelatedCode = strings.ToUpper(strings.TrimSpace(input.RelatedCode))
+	current.ColorTolerance = normalizeTolerance(input.ColorTolerance)
 	current.Version = input.ExpectedVersion + 1
 	current.UpdatedAt = time.Now().UTC()
 	if err := s.repository.UpdateVersioned(ctx, id, input.ExpectedVersion, &current, actor, requestID, "updated colour configuration"); err != nil {
@@ -103,6 +108,11 @@ func (s *printRunService) Transition(ctx context.Context, id uint, input dto.Tra
 	}
 	before := current.Status
 	current.Status = target
+	// Leaving the proof gate clears whatever blocking reason the proof review
+	// recorded, so stale reasons never linger on released/re-printed batches.
+	if target != string(constants.RunStateHold) {
+		current.HoldReason = ""
+	}
 	current.Version = input.ExpectedVersion + 1
 	current.UpdatedAt = time.Now().UTC()
 	if err := s.repository.UpdateVersioned(ctx, id, input.ExpectedVersion, &current, actor, requestID, input.Reason); err != nil {
@@ -134,9 +144,76 @@ func (s *printRunService) StatusCounts(ctx context.Context) (map[string]int64, e
 	return s.repository.CountByStatus(ctx)
 }
 
+// HoldAtProofing implements RunProofGate: the proof service calls it when a
+// proof cannot be released (missing position, worst position over tolerance,
+// or readings changed after review).
+func (s *printRunService) HoldAtProofing(ctx context.Context, code, holdReason, actor, requestID, reason string) (uint, bool, error) {
+	if strings.TrimSpace(code) == "" {
+		return 0, false, nil
+	}
+	runID, parked, err := s.repository.HoldAtProofing(ctx, code, strings.TrimSpace(holdReason), actor, requestID, reason)
+	if err != nil {
+		return 0, false, fmt.Errorf("hold run at proofing: %w", err)
+	}
+	if parked {
+		_ = s.security.Audit(ctx, actor, requestID, "transition", "PrintRun", runID, "proofing", "hold", reason)
+	}
+	return runID, parked, nil
+}
+
+// ResumeProofing implements RunProofGate: after a re-measurement passes review
+// the batch returns to proofing and the blocking reason is cleared.
+func (s *printRunService) ResumeProofing(ctx context.Context, code, actor, requestID, reason string) error {
+	if strings.TrimSpace(code) == "" {
+		return nil
+	}
+	runID, err := s.repository.ResumeProofing(ctx, code, actor, requestID, reason)
+	if err != nil {
+		return fmt.Errorf("resume run proofing: %w", err)
+	}
+	if runID != 0 {
+		_ = s.security.Audit(ctx, actor, requestID, "transition", "PrintRun", runID, "hold", "proofing", reason)
+	}
+	return nil
+}
+
+// EffectiveTolerance implements RunProofGate by reading the batch limit.
+func (s *printRunService) EffectiveTolerance(ctx context.Context, code string) (float64, error) {
+	run, err := s.repository.FindByCode(ctx, code)
+	if err != nil {
+		return DefaultColorTolerance, err
+	}
+	return normalizeTolerance(run.ColorTolerance), nil
+}
+
 func validatePrintRunBusinessFields(code, name, facility, owner string) error {
 	if strings.TrimSpace(code) == "" || strings.TrimSpace(name) == "" || strings.TrimSpace(facility) == "" || strings.TrimSpace(owner) == "" {
 		return ErrInvalidInput
 	}
 	return nil
+}
+
+// DefaultColorTolerance is the batch ΔE limit used when no per-batch tolerance
+// is configured. Judgments compare the worst sheet position against it.
+const DefaultColorTolerance = 3.0
+
+// normalizeTolerance falls back to the default for missing/non-positive limits.
+func normalizeTolerance(value float64) float64 {
+	if value <= 0 {
+		return DefaultColorTolerance
+	}
+	return value
+}
+
+// RunProofGate is the subset of PrintRunService used by the proof gate. It
+// exists as a narrow interface so the proof service can park/resume batches
+// without depending on the concrete print-run service.
+type RunProofGate interface {
+	// HoldAtProofing parks the batch (proofing/hold only) with the reason the
+	// proof review produced. It returns the run ID and true when a run is gated.
+	HoldAtProofing(ctx context.Context, code, holdReason, actor, requestID, reason string) (uint, bool, error)
+	// ResumeProofing clears the proof-gate hold after re-measurement passes.
+	ResumeProofing(ctx context.Context, code, actor, requestID, reason string) error
+	// EffectiveTolerance resolves the batch ΔE limit (default when unset).
+	EffectiveTolerance(ctx context.Context, code string) (float64, error)
 }

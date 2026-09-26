@@ -1,6 +1,22 @@
 # 验收记录
 
-验收日期：2026-08-22（Asia/Shanghai）
+初版验收日期：2026-08-22（Asia/Shanghai）
+
+## 三位置校样门控（2026-09-26 更新）
+
+本次变更把单一色差值改为操作侧、中间、传动侧三个读数，复核按最差位置判定：
+
+- 新增后端单元/集成测试（`backend/internal/service/color_proof_gate_test.go`、`backend/internal/router/proof_gate_test.go`），覆盖：
+  - 缺录位置时提交复核返回 422，批次停在 hold 并写明缺录原因；
+  - 最差位置 ΔE 超过批次 `colorTolerance` 时不能接收（422），批次停在 hold，原因标明超限位置与数值；
+  - 三位置均在范围内时按最差位置接收，批次回到 proofing 并清空滞留原因；
+  - 接收后改动读数生成新判定版本、旧 accepted 结论留在历史（active=false），批次因“复核后读数被改动”停在 hold；
+  - 驳回后重新测量属于正常纠偏，不记篡改；非读数字段编辑不产生新版本。
+- 以 SQLite 模式（`DATABASE_DRIVER=sqlite`）手工 API 烟测走通缺录 → 超限 → 重测接收 → 接收后篡改全链路，批次版本链（`PrintRunRevision`）与审计日志均保留 hold/resume 原因和三位置读数。
+- `scripts/validate.sh` 增加上述门控流程的 Compose 验收断言（缺录 422、超限 422、判定版本链 v1/v2/v3、批次自动回到 proofing）。
+- 命令结果：`go test ./...`、`go vet ./...`、`gofmt -l`（无输出）、`go build ./...` 全部通过；前端 `npm run typecheck` 与 `npm run build` 通过。
+- 规模：非测试 Go 代码 38 个文件、3814 行，符合 26-38 文件与 2700-3900 行范围。
+- 说明：当前环境无 Docker，Compose 端到端脚本未在本机执行；容器化验收需在具备 Docker 的环境运行 `./scripts/validate.sh`。
 
 ## 静态与测试
 

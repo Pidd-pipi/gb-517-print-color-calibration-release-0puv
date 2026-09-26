@@ -17,6 +17,14 @@ type PrintRun struct {
 	Evidence    string             `json:"evidence" gorm:"size:2000"`
 	RelatedCode string             `json:"relatedCode" gorm:"size:64;index"`
 	Revisions   []PrintRunRevision `json:"revisions,omitempty" gorm:"foreignKey:PrintRunID"`
+
+	// ColorTolerance is the batch-level ΔE limit. Proofs are judged by their
+	// worst sheet position against this value; <= 0 falls back to the service
+	// default. HoldReason explains why the batch is stuck at proofing (missing
+	// reading, worst position out of tolerance, or readings changed after
+	// review). It is cleared once a re-measurement is accepted.
+	ColorTolerance float64 `json:"colorTolerance"`
+	HoldReason     string  `json:"holdReason" gorm:"size:500"`
 }
 
 func (item *PrintRun) GetBase() *BaseModel { return &item.BaseModel }
@@ -29,21 +37,23 @@ var PrintRunInitialStatus = "setup"
 // configuration. It is deliberately separate from optimistic locking so an
 // operator can never overwrite the evidence used by an earlier decision.
 type PrintRunRevision struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	PrintRunID  uint      `json:"printRunId" gorm:"not null;uniqueIndex:idx_print_run_revision"`
-	Version     uint      `json:"version" gorm:"not null;uniqueIndex:idx_print_run_revision"`
-	Status      string    `json:"status" gorm:"size:40;not null"`
-	Name        string    `json:"name" gorm:"size:160;not null"`
-	Facility    string    `json:"facility" gorm:"size:120"`
-	Owner       string    `json:"owner" gorm:"size:120"`
-	Category    string    `json:"category" gorm:"size:80"`
-	RiskLevel   string    `json:"riskLevel" gorm:"size:32"`
-	MetricValue float64   `json:"metricValue"`
-	MetricUnit  string    `json:"metricUnit" gorm:"size:24"`
-	Evidence    string    `json:"evidence" gorm:"size:2000"`
-	RelatedCode string    `json:"relatedCode" gorm:"size:64"`
-	Actor       string    `json:"actor" gorm:"size:80;not null"`
-	RequestID   string    `json:"requestId" gorm:"size:80;not null"`
-	Reason      string    `json:"reason" gorm:"size:500;not null"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	PrintRunID     uint      `json:"printRunId" gorm:"not null;uniqueIndex:idx_print_run_revision"`
+	Version        uint      `json:"version" gorm:"not null;uniqueIndex:idx_print_run_revision"`
+	Status         string    `json:"status" gorm:"size:40;not null"`
+	Name           string    `json:"name" gorm:"size:160;not null"`
+	Facility       string    `json:"facility" gorm:"size:120"`
+	Owner          string    `json:"owner" gorm:"size:120"`
+	Category       string    `json:"category" gorm:"size:80"`
+	RiskLevel      string    `json:"riskLevel" gorm:"size:32"`
+	MetricValue    float64   `json:"metricValue"`
+	MetricUnit     string    `json:"metricUnit" gorm:"size:24"`
+	Evidence       string    `json:"evidence" gorm:"size:2000"`
+	RelatedCode    string    `json:"relatedCode" gorm:"size:64"`
+	ColorTolerance float64   `json:"colorTolerance"`
+	HoldReason     string    `json:"holdReason" gorm:"size:500"`
+	Actor          string    `json:"actor" gorm:"size:80;not null"`
+	RequestID      string    `json:"requestId" gorm:"size:80;not null"`
+	Reason         string    `json:"reason" gorm:"size:500;not null"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
